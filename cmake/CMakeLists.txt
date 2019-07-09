@@ -197,10 +197,10 @@ if (MSVC)
   endif()
 else()
   if(onnxruntime_BUILD_FOR_NATIVE_MACHINE)
-    string(APPEND CMAKE_CXX_FLAGS_RELEASE " -O3 -march=native -mtune=native")
-    string(APPEND CMAKE_C_FLAGS_RELEASE " -O3 -march=native -mtune=native")
-    string(APPEND CMAKE_CXX_FLAGS_RELWITHDEBINFO " -O3 -march=native -mtune=native")
-    string(APPEND CMAKE_C_FLAGS_RELWITHDEBINFO " -O3 -march=native -mtune=native")
+    string(APPEND CMAKE_CXX_FLAGS_RELEASE " -march=native -mtune=native")
+    string(APPEND CMAKE_C_FLAGS_RELEASE " -march=native -mtune=native")
+    string(APPEND CMAKE_CXX_FLAGS_RELWITHDEBINFO " -march=native -mtune=native")
+    string(APPEND CMAKE_C_FLAGS_RELWITHDEBINFO " -march=native -mtune=native")
   endif()
   if(onnxruntime_BUILD_x86)
     set (CMAKE_SYSTEM_PROCESSOR "x86")
@@ -604,7 +604,6 @@ if (onnxruntime_USE_CUDA)
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode=arch=compute_30,code=sm_30") # K series
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode=arch=compute_50,code=sm_50") # M series
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode=arch=compute_60,code=sm_60") # P series
-  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode=arch=compute_61,code=sm_61") # 1080
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode=arch=compute_70,code=sm_70") # V series
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --default-stream per-thread")
   if (NOT WIN32)
