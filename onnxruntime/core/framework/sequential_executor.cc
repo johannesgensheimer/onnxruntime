@@ -15,10 +15,25 @@
 #include "core/framework/op_kernel_context_internal.h"
 #include "core/framework/utils.h"
 
+#ifdef ONNXRUNTIME_ENABLE_INSTRUMENT
+#include <Windows.h>
+#include "core/platform/tracing.h"
+namespace {
+LARGE_INTEGER OrtGetPerformanceFrequency() {
+  LARGE_INTEGER v;
+  // On systems that run Windows XP or later, the QueryPerformanceFrequency function will always succeed
+  // and will thus never return zero.
+  (void)QueryPerformanceFrequency(&v);
+  return v;
+}
+
+LARGE_INTEGER perf_freq = OrtGetPerformanceFrequency();
+}  // namespace
+#endif
+
 namespace onnxruntime {
 
-static Status ReleaseNodeMLValues(ExecutionFrame& frame,
-                                  const SequentialExecutionPlan& seq_exec_plan,
+static Status ReleaseNodeMLValues(ExecutionFrame& frame, const SequentialExecutionPlan& seq_exec_plan,
                                   const SequentialExecutionPlan::NodeExecutionPlan& node_exec_plan,
                                   const logging::Logger& logger);
 
@@ -44,7 +59,7 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
   VLOGS(logger, 1) << "Size of execution plan vector: " << exec_plan_vec.size();
 
   // uncomment the line below to dump execution plan
-  //std::cout << std::make_pair(p_seq_exec_plan, &session_state) << "\n";
+  // std::cout << std::make_pair(p_seq_exec_plan, &session_state) << "\n";
 
   for (const auto& node_exec_plan : exec_plan_vec) {
     if (terminate_flag_) {
@@ -54,7 +69,10 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
 
     auto node_index = node_exec_plan.node_index;
     auto p_op_kernel = session_state.GetKernel(node_index);
-
+#ifdef ONNXRUNTIME_ENABLE_INSTRUMENT
+    LARGE_INTEGER kernel_start;
+    QueryPerformanceCounter(&kernel_start);
+#endif
     // if a kernel has been added in the session state, it better be NON-null.
     if (p_op_kernel == nullptr)
       return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Got nullptr from GetKernel for node: ",
@@ -108,8 +126,7 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
 
     if (is_profiler_enabled) {
       session_state.Profiler().EndTimeAndRecordEvent(profiling::NODE_EVENT,
-                                                     p_op_kernel->Node().Name() + "_fence_before",
-                                                     sync_time_begin,
+                                                     p_op_kernel->Node().Name() + "_fence_before", sync_time_begin,
                                                      {{"op_name", p_op_kernel->KernelDef().OpName()}});
 
       // call compute on the kernel
@@ -121,20 +138,17 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
     const auto& compute_status = p_op_kernel->Compute(&op_kernel_context);
     if (!compute_status.IsOK()) {
       std::ostringstream ss;
-      ss << "Non-zero status code returned while running Node: " <<
-            p_op_kernel->Node().Name() <<
-            " Status Message: " <<
-            compute_status.ErrorMessage();
+      ss << "Non-zero status code returned while running Node: " << p_op_kernel->Node().Name()
+         << " Status Message: " << compute_status.ErrorMessage();
       const auto msg_string = ss.str();
       LOGS(logger, ERROR) << msg_string;
       return Status(compute_status.Category(), compute_status.Code(), msg_string);
     }
 
     if (is_profiler_enabled) {
-      session_state.Profiler().EndTimeAndRecordEvent(profiling::NODE_EVENT,
-                                                     p_op_kernel->Node().Name() + "_kernel_time",
-                                                     kernel_begin_time,
-                                                     {{"op_name", p_op_kernel->KernelDef().OpName()}, {"provider", p_op_kernel->KernelDef().Provider()}});
+      session_state.Profiler().EndTimeAndRecordEvent(
+          profiling::NODE_EVENT, p_op_kernel->Node().Name() + "_kernel_time", kernel_begin_time,
+          {{"op_name", p_op_kernel->KernelDef().OpName()}, {"provider", p_op_kernel->KernelDef().Provider()}});
 
       sync_time_begin = session_state.Profiler().StartTime();
     }
@@ -164,12 +178,23 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
     }
 
     if (is_profiler_enabled) {
-      session_state.Profiler().EndTimeAndRecordEvent(profiling::NODE_EVENT,
-                                                     p_op_kernel->Node().Name() + "_fence_after",
-                                                     sync_time_begin,
-                                                     {{"op_name", p_op_kernel->KernelDef().OpName()}});
+      session_state.Profiler().EndTimeAndRecordEvent(profiling::NODE_EVENT, p_op_kernel->Node().Name() + "_fence_after",
+                                                     sync_time_begin, {{"op_name", p_op_kernel->KernelDef().OpName()}});
     }
 
+#ifdef ONNXRUNTIME_ENABLE_INSTRUMENT
+    LARGE_INTEGER kernel_stop;
+    QueryPerformanceCounter(&kernel_stop);
+    LARGE_INTEGER elapsed;
+    elapsed.QuadPart = kernel_stop.QuadPart - kernel_start.QuadPart;
+    elapsed.QuadPart *= 1000000;
+    elapsed.QuadPart /= perf_freq.QuadPart;
+    // Log an event
+    TraceLoggingWrite(ort_provider,  // handle to my provider
+                      "OpEnd",       // Event Name that should uniquely identify your event.
+                      TraceLoggingValue(p_op_kernel->KernelDef().OpName().c_str(), "op_name"),
+                      TraceLoggingValue(elapsed.QuadPart, "time"));
+#endif
 #if defined(DEBUG_NODE_INPUTS_OUTPUTS)
     utils::DumpNodeOutputs(op_kernel_context, p_op_kernel->Node(), session_state);
 #endif
@@ -210,8 +235,7 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
   return Status::OK();
 }
 
-static Status ReleaseNodeMLValues(ExecutionFrame& frame,
-                                  const SequentialExecutionPlan& seq_exec_plan,
+static Status ReleaseNodeMLValues(ExecutionFrame& frame, const SequentialExecutionPlan& seq_exec_plan,
                                   const SequentialExecutionPlan::NodeExecutionPlan& node_exec_plan,
                                   const logging::Logger& logger) {
   for (auto i = node_exec_plan.free_from_index; i <= node_exec_plan.free_to_index; ++i) {
